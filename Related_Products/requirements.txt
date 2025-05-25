@@ -1,5 +1,3 @@
 flask
 psycopg2-binary
-pandas
-faiss-cpu
 sentence-transformers

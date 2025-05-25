@@ -1,32 +1,93 @@
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
+from sentence_transformers import SentenceTransformer
+import psycopg2
 import json
+from flask import Response
 
 app = Flask(__name__)
+model = SentenceTransformer("all-mpnet-base-v2")
 
-# Load related product mapping từ file JSON
-with open("related_products.json", "r", encoding="utf-8") as f:
-    related_data = json.load(f)
+def get_conn():
+    return psycopg2.connect(
+        host="bytesme-singapore-cluster-1-test-aiven-minhduc-uit.k.aivencloud.com",
+        port="17384",
+        dbname="defaultdb",
+        user="avnadmin",
+        password="AVNS_cWnY-GoVwCtfwYowoRQ"
+    )
 
-@app.route('/similar-products/<int:product_id>', methods=['GET'])
-def get_related_products(product_id):
-    pid_str = str(product_id)
+@app.route('/similar-products-text', methods=['POST'])
+def related_products_from_text():
+    data = request.json
+    input_text = data.get("text")
+    top_k = data.get("top_k", 5)
 
-    if pid_str not in related_data:
-        return jsonify({
-            "error": f"Product ID {product_id} not found in related data."
-        }), 404
+    if not input_text:
+        return jsonify({"error": "Missing 'text' in request body"}), 400
 
-    # Lấy tham số top_k từ query string
-    top_k = request.args.get("top_k", default=5, type=int)
+    embedding = model.encode([input_text])[0].tolist()
 
-    # Lấy tối đa top_k sản phẩm liên quan
-    related_ids = related_data[pid_str][:top_k]
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT cmetadata FROM langchain_pg_embedding
+        ORDER BY embedding <=> %s::vector LIMIT %s
+    """, (embedding, top_k))
 
-    return jsonify({
-        "product_id": product_id,
+    results = [row[0] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+
+    return Response(
+    json.dumps({
+        "product_code": product_code,
         "top_k": top_k,
-        "Similar_product_ids": related_ids
-    })
+        "related_products": results
+    }, ensure_ascii=False),
+    content_type='application/json'
+)
+
+@app.route('/similar-products/<product_code>', methods=['GET'])
+def related_products_by_code(product_code):
+    top_k = int(request.args.get("top_k", 5))
+
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    # Trích document từ metadata
+    cursor.execute("""
+        SELECT document FROM langchain_pg_embedding
+        WHERE cmetadata->>'product_code' = %s
+        LIMIT 1
+    """, (product_code,))
+    row = cursor.fetchone()
+
+    if not row:
+        return jsonify({"error": f"Product code '{product_code}' not found."}), 404
+
+    input_text = row[0]
+    embedding = model.encode([input_text])[0].tolist()
+
+    # Tìm sản phẩm tương đồng (loại trừ chính nó)
+    cursor.execute("""
+        SELECT cmetadata FROM langchain_pg_embedding
+        WHERE cmetadata->>'product_code' != %s
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s
+    """, (product_code, embedding, top_k))
+
+    results = [row[0] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+
+    return Response(
+    json.dumps({
+        "product_code": product_code,
+        "top_k": top_k,
+        "related_products": results
+    }, ensure_ascii=False),
+    content_type='application/json'
+)
 
 if __name__ == '__main__':
     app.run(debug=True)
