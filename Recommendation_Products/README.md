@@ -18,7 +18,7 @@ Chạy script để thực thi thuật toán FP-Growth và tạo file JSON:
 ```bash
 python build_related_products.py
 ```
-!!! Sau khi chạy xong sẽ tạo ra file related_products.json.
+!!! Sau khi chạy xong sẽ tạo ra related_products.db
 
 ## Khởi chạy Flask API
 ```bash

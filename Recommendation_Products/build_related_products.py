@@ -1,6 +1,7 @@
 import psycopg2
 import pandas as pd
 import json
+import sqlite3
 from mlxtend.frequent_patterns import fpgrowth, association_rules
 from mlxtend.preprocessing import TransactionEncoder
 from collections import defaultdict
@@ -63,9 +64,27 @@ for a, related_list in temp_map.items():
     top_related = [x[0] for x in sorted_list[:1]]
     related_map[str(a)] = list(map(int, top_related))
 
-# Ghi ra file JSON
-related_map = {str(k): list(map(int, v)) for k, v in related_map.items()}
-with open("related_products.json", "w") as f:
-    json.dump(related_map, f, indent=2)
+# Liên kết với CSDL SQLITE3
+# Kết nối SQLite (tạo file nếu chưa có)
+conn_sqlite = sqlite3.connect("related_products.db")
+cur = conn_sqlite.cursor()
 
-print(f"✅ Đã ghi {len(related_map)} sản phẩm vào related_products.json")
+# Tạo bảng nếu chưa có
+cur.execute("DROP TABLE IF EXISTS related_products")
+cur.execute("""
+    CREATE TABLE related_products (
+        product_id TEXT,
+        related_id TEXT
+    )
+""")
+
+# Ghi từng cặp vào bảng
+for pid, related_list in related_map.items():
+    for rid in related_list:
+        cur.execute("INSERT INTO related_products (product_id, related_id) VALUES (?, ?)", (pid, str(rid)))
+
+# Lưu và đóng kết nối
+conn_sqlite.commit()
+conn_sqlite.close()
+
+print(f"✅ Đã ghi {sum(len(v) for v in related_map.values())} bản ghi vào related_products.db")
